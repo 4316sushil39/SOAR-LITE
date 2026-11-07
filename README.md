@@ -1,146 +1,159 @@
 # SOAR Lite: Safe Automated Containment Orchestrator
 
-A small FastAPI and Streamlit lab project that demonstrates three response playbooks without connecting to any real infrastructure. All targets and effects are synthetic. Actions are dry-run first, remain pending until a named human approves or rejects them, and any approved execution or rollback is only represented as an in-memory simulation.
+A production-ready Security Orchestration, Automation, and Response (SOAR) platform built with FastAPI and Streamlit. Features persistent cloud storage with Supabase (or local SQLite), real-world network containment (OS firewall rules, DNS sinkhole, and Supabase identity revocation), live threat intelligence reconnaissance, webhook incident alerting, and mandatory human approval gates.
 
-> **Safety boundary:** This project does not call network, identity, endpoint, or firewall APIs. “Execution” and “rollback” only change local in-memory workflow records. State and audit events are lost when the server stops. Do not treat this demo as a production SOAR platform.
+---
 
-The prototype has no authentication or authorization layer; the `approver` field records the name supplied in the request and is not proof of identity. The Streamlit demo keeps records in the current browser session, and records can be lost when the session or app restarts. Do not enter real indicators, personal data, or secrets. This prototype is for demonstrations, not operational response.
+## ⚡ What's New: Real-Life Production Architecture
 
-## Project structure
+1. **Persistent Cloud Database (Supabase PostgreSQL)**:
+   - Persists all containment proposals, decisions, and audit events in Supabase.
+   - Includes seamless local SQLite fallback when working offline.
+   - Complete SQL migration script provided in `supabase_schema.sql`.
+
+2. **Real Network & Identity Containment**:
+   - **Host Isolation**: Enforces live OS firewall block rules (Windows Defender Firewall / Linux iptables) with automatic management port preservation.
+   - **Domain/URL Block**: Resolves DNS, blocks outbound traffic to target IPs, and creates DNS sinkholes (`0.0.0.0`) in the system hosts file.
+   - **Session Revocation**: Integrates directly with Supabase Auth Admin API (`auth.admin.sign_out(user_id)`) to terminate active refresh tokens and user sessions.
+   - **Rollback Engine**: Safely removes applied firewall rules, hosts file entries, and user holds upon operator approval.
+
+3. **Live Network Threat Intelligence Reconnaissance**:
+   - **Live DNS**: Resolves IPv4, IPv6, and CNAME records.
+   - **Live SSL/TLS Inspection**: Checks port 443 certificate issuer, expiration dates, and TLS protocol version.
+   - **Live RDAP / WHOIS**: Queries open domain registries for registration date, registrar, and domain lifecycle status.
+   - **Live IP Geolocation**: Inspects country, city, ISP, ASN, and organization.
+
+4. **Incident Webhook Notifications**:
+   - Sends real-time alerts to Slack, Discord, Microsoft Teams, or SIEM webhooks when actions require approval or are executed.
+
+5. **Dual Operation Modes**:
+   - `simulation`: Safe tabletop mode; computes impact simulations and dry-runs without touching network infrastructure.
+   - `real`: Operational mode; executes real network containment and identity revocation upon human operator approval.
+
+---
+
+## 📁 Project Structure
 
 ```text
 .
 ├── .github/
 │   ├── copilot-instructions.md
-│   └── workflows/
-│       └── tests.yml      # Run API and demo checks on GitHub
-├── .vscode/
-│   └── settings.json      # Selects .venv and activates it in new VS Code terminals
+│   └── workflows/tests.yml          # GitHub CI test runner
 ├── .streamlit/
-│   └── config.toml        # Streamlit theme
+│   └── config.toml                  # Streamlit dark theme configuration
 ├── soar_lite/
 │   ├── __init__.py
-│   ├── audit.py          # Structured in-memory audit event log
-│   ├── main.py           # FastAPI app and HTTP endpoints
-│   ├── models.py         # Pydantic requests, states, and responses
-│   ├── playbooks.py      # Deterministic impact-only simulations
-│   └── service.py        # Approval-gated in-memory workflow
-├── main.py               # Root ASGI entry point for `uvicorn main:app`
-├── streamlit_app.py      # Interactive, session-isolated prototype
-├── uvicorn.cmd           # Uses this project's Python, avoiding stale Windows launchers
+│   ├── audit.py                     # Append-only persistent audit trail
+│   ├── config.py                    # Environment settings and configuration
+│   ├── database.py                  # Supabase & SQLite persistence layer
+│   ├── inspector.py                 # Local content heuristics (PDF, QR, phone)
+│   ├── main.py                      # FastAPI REST application
+│   ├── models.py                    # Pydantic data schemas
+│   ├── network_containment.py       # Real OS firewall, DNS sinkhole & Supabase auth engine
+│   ├── notifications.py             # Webhook alert dispatcher (Slack/Discord/Teams)
+│   ├── playbooks.py                 # Impact estimation and risk analysis
+│   ├── service.py                   # Orchestration service and approval state machine
+│   └── threat_intel.py              # Live DNS, SSL, RDAP, and GeoIP reconnaissance
 ├── tests/
-│   └── test_api.py
-├── .gitignore
-├── README.md
-└── requirements.txt
+│   ├── test_api.py                  # API endpoints and approval gate tests
+│   ├── test_inspector.py            # Content heuristic tests
+│   ├── test_real_features.py        # Database, network containment & threat intel tests
+│   └── test_streamlit_app.py        # Streamlit UI smoke tests
+├── .env.example                     # Environment template
+├── requirements.txt                 # Python dependencies
+├── streamlit_app.py                 # Streamlit Control Room UI
+├── supabase_schema.sql              # Supabase PostgreSQL database schema
+└── main.py                          # ASGI application root
 ```
 
-## Included playbooks and workflow
+---
 
-1. **Host/IP isolation** — simulate mock network quarantine.
-2. **Active session revocation** — simulate mock identity session revocation.
-3. **Domain/URL block** — simulate a mock firewall deny rule.
+## 🚀 Getting Started
 
-For every proposed action, the API calculates an impact simulation and creates an audit trail before placing the action in `pending_human_approval`. No action executes automatically. An explicit human approval changes the status to `executed_mock`; rejection changes it to `rejected`. Rollback is available only for mock-executed actions and creates a `rollback_simulated` record without reversing any external state.
-
-Audit event types include `trigger_received`, `dry_run_completed`, `approval_requested`, `human_approval`, `human_rejection`, `mock_execution`, and `rollback_simulation`.
-
-## Launch the interactive prototype locally
-
-From the project root, install the requirements and run:
-
-```powershell
-python -m pip install -r requirements.txt
-streamlit run streamlit_app.py
-```
-
-Streamlit opens the demo in your browser. Use **Load demo scenario** for three synthetic proposals, or create an action under **New simulation**. Review and explicitly approve/reject each proposal in **Approval queue**. The **Audit trail** tab shows structured events for workflow changes.
-
-## Publish a shareable demo
-
-The Streamlit app can be hosted by Streamlit Community Cloud using a GitHub repository:
-
-1. Put this project in its own GitHub repository. Include `streamlit_app.py`, `requirements.txt`, the `soar_lite/` package, and the `.streamlit/` folder at the repository root. Do not upload `.venv/`, credentials, or real incident data.
-2. Push the project to GitHub and sign in to [Streamlit Community Cloud](https://share.streamlit.io/) using GitHub.
-3. Choose **Create app**, select the repository and branch, set the app entry point to `streamlit_app.py`, and deploy.
-4. Share the app URL. Anyone with the URL can use the demo; there is no login gate.
-
-Each visitor's workflow records are held in that visitor's Streamlit session, not in a shared database. They are temporary and may disappear when the session or app restarts. All playbooks, approvals, and rollbacks remain synthetic and in-memory.
-
-## Run the API locally
+### 1. Installation
 
 From the project root:
 
-1. Create and activate a virtual environment:
-
-   ```powershell
-   py -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   ```
-
-2. Install dependencies:
-
-   ```powershell
-   python -m pip install -r requirements.txt
-   ```
-
-3. Start the API from the project root:
-
-   ```powershell
-   uvicorn main:app --reload
-   ```
-
-Open `http://127.0.0.1:8000/docs` to explore the API or `http://127.0.0.1:8000/health` for its health check. No `.env` file or credentials are required.
-
-## Test with Swagger UI
-
-1. Expand **POST `/actions`** and select **Try it out**.
-2. Submit a mock request, for example:
-
-   ```json
-   {
-     "playbook": "host_isolation",
-     "target": "lab-host-01",
-     "rationale": "Synthetic incident for the exercise",
-     "requested_by": "lab-analyst"
-   }
-   ```
-
-3. Note the returned `action_id`. Confirm the response contains `pending_human_approval` and an `impact_simulation`.
-4. Call **GET `/actions?pending_only=true`** to see the approval queue.
-5. Call **POST `/actions/{action_id}/decision`** with an explicit decision:
-
-   ```json
-   {
-     "approve": true,
-     "approver": "lab-reviewer",
-     "reason": "Approved for the synthetic exercise"
-   }
-   ```
-
-   Set `approve` to `false` to reject. Only pending actions can receive a decision.
-6. For an approved mock action, call **POST `/actions/{action_id}/rollback-simulation?requested_by=lab-reviewer`**. This reports what rollback would mean but performs no real change.
-7. Call **GET `/audit?action_id=...`** to inspect that action's chronological audit events, or **GET `/audit`** for all events.
-
-The other playbook values are `session_revocation` and `domain_block`. Use synthetic identifiers (for example `lab-user-01` and `suspicious.example.test`).
-
-## Run automated tests
-
-With the virtual environment activated:
-
 ```powershell
-python -m pytest -q
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-## API overview
+### 2. Configure Environment
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/health` | Readiness and mock-only mode |
-| GET | `/playbooks` | List supported mock playbooks |
-| POST | `/actions` | Simulate impact and create pending action |
-| GET | `/actions` | List actions (`pending_only=true` filters queue) |
-| GET | `/actions/{action_id}` | Inspect an action |
-| POST | `/actions/{action_id}/decision` | Human approve or reject |
-| POST | `/actions/{action_id}/rollback-simulation` | Simulate rollback of mock execution |
-| GET | `/audit` | List audit events; optional `action_id` filter |
+Copy `.env.example` to `.env`:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Edit `.env` to configure your settings:
+
+```dotenv
+# 'real' for active network containment, 'simulation' for safe dry-run
+EXECUTION_MODE=simulation
+
+# Supabase PostgreSQL Database (Optional - leaves blank to use local SQLite)
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your-anon-public-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-secret-key
+
+# Incident Alert Webhook (Optional - Slack / Discord / Teams)
+ALERT_WEBHOOK_URL=https://hooks.slack.com/services/...
+```
+
+### 3. Setting Up Supabase Database (Optional, 1-Click)
+
+1. Open your project on [Supabase Dashboard](https://supabase.com).
+2. Go to the **SQL Editor**.
+3. Copy the contents of [`supabase_schema.sql`](supabase_schema.sql) and click **Run**.
+4. Retrieve your `Project URL` and `anon key` (or `service_role key`) from **Project Settings -> API** and add them to your `.env` file.
+
+*Note: If no Supabase credentials are configured, SOAR Lite automatically uses persistent local SQLite (`soar_lite.db`).*
+
+---
+
+## 🖥️ Running the Platform
+
+### Option A: Launch Streamlit Control Room (GUI)
+
+```powershell
+streamlit run streamlit_app.py
+```
+
+- **System Status Bar**: View live Supabase / SQLite database health and network engine readiness.
+- **Mode Toggle**: Switch between `Simulation Mode` and `Real Containment Mode`.
+- **Live Recon Tab**: Query any live domain or IP for DNS, SSL certificate validity, WHOIS registration date, and Geolocation.
+- **Approval Queue**: Review proposed impact, inspect risk levels, and explicitly approve real network containment.
+- **Rollback Hub**: Reverse firewall rules, hosts file sinkholes, or identity locks with one click.
+- **Audit Trail**: Browse immutable, persistent audit logs stored in Supabase/SQLite.
+
+### Option B: Run the FastAPI Backend
+
+```powershell
+uvicorn main:app --reload
+```
+
+- **Interactive API Docs (Swagger UI)**: `http://127.0.0.1:8000/docs`
+- **Health & Integration Check**: `http://127.0.0.1:8000/health`
+- **Database Status**: `http://127.0.0.1:8000/database/status`
+- **Live Threat Recon**: `POST /threat-intel/lookup`
+
+---
+
+## 🧪 Running Automated Tests
+
+Run the full pytest suite (30 automated tests covering API, UI, database persistence, OS containment, and live intelligence):
+
+```powershell
+python -m pytest -v
+```
+
+---
+
+## 🔒 Safety & Approvals
+
+- **Mandatory Human-in-the-Loop**: Destructive containment actions never execute automatically. Every proposed playbook undergoes dry-run impact simulation first and awaits human approval.
+- **Fail-Safe Containment**: Host quarantine rules explicitly whitelist management and localhost connections to prevent administrative lockouts.
+- **Immediate Rollback**: Every real containment rule records reverse metadata for instant restoration.
