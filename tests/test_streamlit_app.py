@@ -57,3 +57,32 @@ def test_threat_checker_analyzes_url_without_network_lookup():
     assert report.risk == "Medium"
     assert report.urls[0].submitted == "https://bit.ly/example"
     assert not app.exception
+
+
+
+def test_device_threat_analyzer_scan_and_queue():
+    app_path = Path(__file__).resolve().parents[1] / "streamlit_app.py"
+    app = AppTest.from_file(str(app_path)).run(timeout=15)
+
+    # Trigger scan with injected scenario
+    scan_button = next(
+        button for button in app.button if button.label == "⚡ Scan with Injected Attack Telemetry"
+    )
+    scan_button.click().run(timeout=15)
+
+    assert not app.exception
+    scan_result = app.session_state["device_scan_result"]
+    assert scan_result is not None
+    assert len(scan_result.findings) > 0
+    assert scan_result.security_score <= 100
+
+    # Queue all high/critical threats button
+    queue_all_btn = next(
+        button for button in app.button if button.label == "⚡ Queue All High/Critical Threats"
+    )
+    queue_all_btn.click().run(timeout=15)
+
+    assert not app.exception
+    pending = app.session_state["orchestrator"].list_actions(pending_only=True)
+    assert len(pending) >= 1
+    assert any(a.requested_by == "device-threat-analyzer" for a in pending)

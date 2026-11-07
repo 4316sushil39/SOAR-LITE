@@ -30,6 +30,12 @@ A production-ready Security Orchestration, Automation, and Response (SOAR) platf
    - `simulation`: Safe tabletop mode; computes impact simulations and dry-runs without touching network infrastructure.
    - `real`: Operational mode; executes real network containment and identity revocation upon human operator approval.
 
+6. **Real Device Threat & Vulnerability Analyzer**:
+   - Live endpoint inspection querying Antivirus / EDR status (Windows Defender real-time protection, signature currency, active detections).
+   - Firewall profile posture verification (Domain, Private, Public profiles).
+   - Network socket exposure analysis (listening ports detecting SMB 445, RDP 3389, RPC 135, MySQL 3306, and suspicious external connections).
+   - Direct bridge into the **SOAR Approval Queue**: 1-click conversion of endpoint vulnerabilities and active threats into pending containment actions.
+
 ---
 
 ## 📁 Project Structure
@@ -53,12 +59,14 @@ A production-ready Security Orchestration, Automation, and Response (SOAR) platf
 │   ├── notifications.py             # Webhook alert dispatcher (Slack/Discord/Teams)
 │   ├── playbooks.py                 # Impact estimation and risk analysis
 │   ├── service.py                   # Orchestration service and approval state machine
+│   ├── threat_collector.py          # Real device threat, firewall & antivirus telemetry collector
 │   └── threat_intel.py              # Live DNS, SSL, RDAP, and GeoIP reconnaissance
 ├── tests/
 │   ├── test_api.py                  # API endpoints and approval gate tests
 │   ├── test_inspector.py            # Content heuristic tests
 │   ├── test_real_features.py        # Database, network containment & threat intel tests
-│   └── test_streamlit_app.py        # Streamlit UI smoke tests
+│   ├── test_streamlit_app.py        # Streamlit UI smoke tests
+│   └── test_threat_collector.py     # Device threat & vulnerability telemetry tests
 ├── .env.example                     # Environment template
 ├── requirements.txt                 # Python dependencies
 ├── streamlit_app.py                 # Streamlit Control Room UI

@@ -94,3 +94,43 @@ def test_rollback_requires_mock_execution(client):
 
 def test_unknown_action_returns_not_found(client):
     assert client.get("/actions/not-a-real-id").status_code == 404
+
+
+
+def test_device_scan_and_queue_threat_api(client):
+    scan_resp = client.post(
+        "/threats/device-scan",
+        json={"include_threat_emulation": True, "emulated_scenario": "Active Ransomware C2 Beaconing"},
+    )
+    assert scan_resp.status_code == 200
+    scan_data = scan_resp.json()
+    assert "security_score" in scan_data
+    assert "findings" in scan_data
+    assert len(scan_data["findings"]) > 0
+
+    finding = scan_data["findings"][0]
+
+    queue_resp = client.post(
+        "/threats/queue",
+        json={
+            "id": finding["id"],
+            "title": finding["title"],
+            "category": finding["category"],
+            "severity": finding["severity"],
+            "target": finding["target"],
+            "description": finding["description"],
+            "evidence": finding["evidence"],
+            "mitre_attack": finding["mitre_attack"],
+            "recommended_playbook": finding["recommended_playbook"],
+            "rationale": finding["rationale"],
+            "requested_by": "api-threat-sensor",
+        },
+    )
+    assert queue_resp.status_code == 201
+    queued_action = queue_resp.json()
+    assert queued_action["status"] == "pending_human_approval"
+    assert queued_action["target"] in (finding["target"], "127.0.0.1")
+    assert queued_action["requested_by"] == "api-threat-sensor"
+
+    pending = client.get("/actions", params={"pending_only": True}).json()
+    assert any(a["action_id"] == queued_action["action_id"] for a in pending)

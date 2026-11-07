@@ -11,10 +11,13 @@ from .models import (
     ApprovalDecision,
     AuditEvent,
     ContainmentAction,
+    DeviceThreatScanRequest,
     LiveThreatIntelRequest,
     PlaybookName,
+    QueueThreatRequest,
 )
 from .service import ActionNotFoundError, InvalidTransitionError, Orchestrator
+from .threat_collector import DeviceThreatFinding, device_collector
 from .threat_intel import threat_intel
 
 app = FastAPI(
@@ -130,3 +133,57 @@ def list_audit_events(
 def live_threat_intel_lookup(payload: LiveThreatIntelRequest) -> dict[str, Any]:
     """Perform live DNS, SSL cert inspection, HTTP probe, RDAP domain registration, and IP Geolocation."""
     return threat_intel.investigate(payload.target)
+
+
+@app.post("/threats/device-scan", tags=["device-security"])
+def run_device_scan(payload: DeviceThreatScanRequest) -> dict[str, Any]:
+    """Analyze real threats, vulnerabilities, firewall posture, and antiviruses on the endpoint."""
+    scan_result = device_collector.run_scan(
+        include_threat_emulation=payload.include_threat_emulation,
+        emulated_scenario=payload.emulated_scenario,
+    )
+    return {
+        "timestamp": scan_result.timestamp,
+        "os_info": scan_result.os_info,
+        "security_score": scan_result.security_score,
+        "risk_level": scan_result.risk_level,
+        "antivirus_status": scan_result.antivirus_status,
+        "firewall_status": scan_result.firewall_status,
+        "network_exposure": scan_result.network_exposure,
+        "findings": [
+            {
+                "id": f.id,
+                "title": f.title,
+                "category": f.category,
+                "severity": f.severity,
+                "target": f.target,
+                "description": f.description,
+                "evidence": f.evidence,
+                "mitre_attack": f.mitre_attack,
+                "recommended_playbook": f.recommended_playbook.value,
+                "rationale": f.rationale,
+                "queued_action_id": f.queued_action_id,
+            }
+            for f in scan_result.findings
+        ],
+        "is_emulated": scan_result.is_emulated,
+    }
+
+
+@app.post("/threats/queue", response_model=ContainmentAction, status_code=status.HTTP_201_CREATED, tags=["device-security"])
+def queue_threat_to_approval(payload: QueueThreatRequest, request: Request) -> ContainmentAction:
+    """Bridge a detected device threat directly to the human Approval Queue."""
+    orchestrator = request.app.state.orchestrator
+    finding = DeviceThreatFinding(
+        id=payload.id,
+        title=payload.title,
+        category=payload.category,
+        severity=payload.severity,
+        target=payload.target,
+        description=payload.description,
+        evidence=payload.evidence,
+        mitre_attack=payload.mitre_attack,
+        recommended_playbook=payload.recommended_playbook,
+        rationale=payload.rationale,
+    )
+    return device_collector.queue_threat_to_soar(finding, orchestrator, requested_by=payload.requested_by)

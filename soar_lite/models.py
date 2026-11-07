@@ -96,3 +96,26 @@ class LiveThreatIntelRequest(BaseModel):
 
     target: str = Field(min_length=1, max_length=253, description="Domain, URL, or IP address")
     lookup_type: str = Field(default="auto", description="'domain', 'ip', 'url', or 'auto'")
+
+
+class DeviceThreatScanRequest(BaseModel):
+    """Request to initiate a live or scenario-based device threat scan."""
+
+    include_threat_emulation: bool = False
+    emulated_scenario: str | None = None
+
+
+class QueueThreatRequest(BaseModel):
+    """Request to queue a detected device threat directly to the SOAR approval queue."""
+
+    id: str = Field(default_factory=lambda: "THR-API")
+    title: str
+    category: str = "Device Telemetry"
+    severity: str = "HIGH"
+    target: str
+    description: str = ""
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    mitre_attack: str = ""
+    recommended_playbook: PlaybookName = PlaybookName.HOST_ISOLATION
+    rationale: str = ""
+    requested_by: str = "device-threat-analyzer"

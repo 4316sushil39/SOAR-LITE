@@ -26,6 +26,11 @@ from soar_lite.models import (
     PlaybookName,
 )
 from soar_lite.service import ActionNotFoundError, InvalidTransitionError, Orchestrator
+from soar_lite.threat_collector import (
+    DeviceSecurityScanResult,
+    DeviceThreatFinding,
+    device_collector,
+)
 from soar_lite.threat_intel import threat_intel
 
 # Reload configuration from .env dynamically
@@ -88,6 +93,11 @@ st.markdown(
         margin-top: 0.8rem;
         margin-bottom: 0.8rem;
     }
+    .sev-critical { background: #4a151b; color: #ff6b6b; border: 1px solid #a82835; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 0.75rem; }
+    .sev-high { background: #45260a; color: #ffa94d; border: 1px solid #995514; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 0.75rem; }
+    .sev-medium { background: #3d3209; color: #ffd43b; border: 1px solid #8c7314; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 0.75rem; }
+    .sev-low { background: #11283d; color: #74c0fc; border: 1px solid #18538a; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 0.75rem; }
+    .mitre-badge { background: #162238; color: #69dbc1; border: 1px solid #234161; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-family: monospace; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -95,6 +105,12 @@ st.markdown(
 
 if "orchestrator" not in st.session_state:
     st.session_state.orchestrator = Orchestrator()
+
+if "device_scan_result" not in st.session_state:
+    st.session_state.device_scan_result = None
+
+if "queued_threat_ids" not in st.session_state:
+    st.session_state.queued_threat_ids = {}
 
 orchestrator: Orchestrator = st.session_state.orchestrator
 
@@ -372,9 +388,201 @@ metric_columns[1].metric("Awaiting Approval", pending_count)
 metric_columns[2].metric("Executed Actions", executed_count)
 metric_columns[3].metric("Audit Events", audit_count)
 
-overview_tab, checker_tab, simulate_tab, approvals_tab, audit_tab, db_tab = st.tabs(
-    ["Start here", "Threat checker", "New simulation", "Approval queue", "Audit trail", "Database & Cloud"]
+device_tab, approvals_tab, simulate_tab, checker_tab, audit_tab, db_tab, overview_tab = st.tabs(
+    [
+        "🛡️ Real Device Threats",
+        "Approval queue",
+        "New simulation",
+        "Threat checker",
+        "Audit trail",
+        "Database & Cloud",
+        "Start here",
+    ]
 )
+
+with device_tab:
+    st.subheader("🛡️ Real Endpoint Threat & Vulnerability Analyzer")
+    st.markdown(
+        "Analyzes real endpoint telemetry collected from **Host Firewalls**, **Antivirus / EDR** "
+        "(Windows Defender / Linux security daemons), **Listening Network Sockets**, and **Outbound Connections**. "
+        "Any discovered vulnerabilities or active threats can be pushed into the **Approval Queue** "
+        "with a single click for human authorization and real network containment."
+    )
+
+    scan_col1, scan_col2 = st.columns([1, 1])
+    with scan_col1:
+        st.markdown("**Live Device Inspection**")
+        st.caption("Scans real local system configurations, active Defender status, firewall profiles, and listening ports.")
+        trigger_live_scan = st.button("🔍 Scan Real Device Telemetry Now", type="primary", use_container_width=True)
+
+    with scan_col2:
+        st.markdown("**Threat Telemetry Testing Pack**")
+        st.caption("Injects high-fidelity attack telemetry to test SOAR containment workflows even on clean systems.")
+        emulation_scenario = st.selectbox(
+            "Select attack scenario to test",
+            [
+                "Active Ransomware C2 Beaconing (Cobalt Strike / LockBit)",
+                "Lateral SMB Worm Propagation Attempt (Port 445)",
+                "RDP Credential Stuffing & Brute Force Surge",
+            ],
+            index=0,
+        )
+        trigger_emulation_scan = st.button("⚡ Scan with Injected Attack Telemetry", use_container_width=True)
+
+    if trigger_live_scan:
+        with st.spinner("Querying live endpoint telemetry (Antivirus, Firewall, Network sockets)..."):
+            st.session_state.device_scan_result = device_collector.run_scan(include_threat_emulation=False)
+        st.toast("Live device scan completed!", icon="🛡️")
+        st.rerun()
+
+    if trigger_emulation_scan:
+        with st.spinner(f"Running device scan and injecting '{emulation_scenario}' scenario..."):
+            st.session_state.device_scan_result = device_collector.run_scan(
+                include_threat_emulation=True, emulated_scenario=emulation_scenario
+            )
+        st.toast("Attack scenario injected successfully!", icon="⚡")
+        st.rerun()
+
+    scan_result: DeviceSecurityScanResult | None = st.session_state.get("device_scan_result")
+
+    if scan_result is None:
+        st.info("👆 Click **'Scan Real Device Telemetry Now'** above to inspect this machine's firewall, antivirus, and network posture.")
+    else:
+        st.markdown("---")
+        score = scan_result.security_score
+        risk = scan_result.risk_level
+
+        h_col1, h_col2, h_col3, h_col4, h_col5 = st.columns(5)
+        h_col1.metric("Device Security Score", f"{score} / 100")
+        h_col2.metric("Posture Risk Level", risk.upper())
+
+        av_info = scan_result.antivirus_status
+        av_status_txt = "Active" if av_info.get("antivirus_enabled") and av_info.get("realtime_protection_enabled") else "Warning"
+        h_col3.metric("Antivirus / EDR", av_status_txt)
+
+        fw_info = scan_result.firewall_status
+        fw_status_txt = "All ON" if fw_info.get("all_enabled") else "Disabled Profiles"
+        h_col4.metric("Host Firewall", fw_status_txt)
+
+        h_col5.metric("Threat Findings", len(scan_result.findings))
+
+        os_info = scan_result.os_info
+        st.caption(
+            f"Host: **{os_info.get('hostname')}** · OS: **{os_info.get('system')} {os_info.get('release')}** · "
+            f"Machine: **{os_info.get('machine')}** · Last Scan: **{scan_result.timestamp[:19].replace('T', ' ')} UTC**"
+            + (" · *(Contains Simulated Scenario)*" if scan_result.is_emulated else " · *(100% Real Live Telemetry)*")
+        )
+
+        with st.expander("🔍 View Raw Telemetry Breakdown (Antivirus, Firewall, Network Ports)", expanded=False):
+            tel_tab1, tel_tab2, tel_tab3 = st.tabs(["🛡️ Antivirus / EDR", "🔥 Firewall Profiles", "🌐 Network Sockets & Connections"])
+
+            with tel_tab1:
+                st.markdown(f"**Provider:** `{av_info.get('provider', 'OS Defender')}`")
+                av_c1, av_c2, av_c3 = st.columns(3)
+                av_c1.write(f"**Engine Enabled:** {'✅ Yes' if av_info.get('antivirus_enabled') else '❌ No'}")
+                av_c2.write(f"**Real-Time Protection:** {'✅ Yes' if av_info.get('realtime_protection_enabled') else '❌ No'}")
+                av_c3.write(f"**Signature Version:** `{av_info.get('signature_version', 'Unknown')}`")
+
+                threats = av_info.get("active_threats", [])
+                if threats:
+                    st.error(f"⚠️ {len(threats)} Active Malware Detections Found:")
+                    for t in threats:
+                        st.write(f"- Threat: **{t.get('ThreatName')}** (ID: `{t.get('ThreatID')}`)")
+                else:
+                    st.success("No active malware infections currently flagged by EDR engine.")
+
+            with tel_tab2:
+                st.markdown(f"**Provider:** `{fw_info.get('provider', 'Host Firewall')}`")
+                fw_c1, fw_c2, fw_c3 = st.columns(3)
+                fw_c1.write(f"**Domain Profile:** `{'🟢 ON' if fw_info.get('domain_profile') == 'ON' else '🔴 OFF'}`")
+                fw_c2.write(f"**Private Profile:** `{'🟢 ON' if fw_info.get('private_profile') == 'ON' else '🔴 OFF'}`")
+                fw_c3.write(f"**Public Profile:** `{'🟢 ON' if fw_info.get('public_profile') == 'ON' else '🔴 OFF'}`")
+                if "raw_output" in fw_info:
+                    st.text(fw_info["raw_output"])
+
+            with tel_tab3:
+                net_info = scan_result.network_exposure
+                st.write(f"**Listening Sockets:** {net_info.get('listening_count', 0)} · **Established Connections:** {net_info.get('established_count', 0)}")
+
+                high_risks = net_info.get("high_risk_ports_found", [])
+                if high_risks:
+                    st.warning(f"⚠️ {len(high_risks)} High-Risk Port(s) Exposed to Public Bind (0.0.0.0):")
+                    for hr in high_risks:
+                        st.write(f"- Port **{hr['port']}** ({hr['service']}) · Process: `{hr['process_name']}` (PID: {hr['pid']})")
+
+                with st.expander("Show listening ports table"):
+                    st.dataframe(net_info.get("listening_sockets", []), use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("🚨 Discovered Threats & Vulnerabilities")
+        st.write("Review discovered threats below. Click **'🚨 Queue for SOAR Approval'** to bridge directly into the Approval Queue for human containment authorization.")
+
+        if not scan_result.findings:
+            st.success("✅ Clean Posture: No high-risk threats, disabled firewalls, or dangerous exposed ports detected!")
+        else:
+            batch_col1, batch_col2 = st.columns([2, 1])
+            with batch_col1:
+                severity_filter = st.radio(
+                    "Filter by Severity",
+                    ["All", "CRITICAL", "HIGH", "MEDIUM", "LOW"],
+                    horizontal=True,
+                )
+            with batch_col2:
+                if st.button("⚡ Queue All High/Critical Threats", type="primary", use_container_width=True):
+                    queued_count = 0
+                    for f in scan_result.findings:
+                        if f.severity in ("CRITICAL", "HIGH") and f.id not in st.session_state.queued_threat_ids:
+                            act = device_collector.queue_threat_to_soar(f, orchestrator)
+                            st.session_state.queued_threat_ids[f.id] = act.action_id
+                            queued_count += 1
+                    if queued_count > 0:
+                        st.success(f"Queued {queued_count} threat(s) into the Approval Queue!")
+                        st.rerun()
+                    else:
+                        st.info("All high/critical threats are already in the Approval Queue.")
+
+            filtered_findings = [
+                f for f in scan_result.findings
+                if severity_filter == "All" or f.severity.upper() == severity_filter
+            ]
+
+            for finding in filtered_findings:
+                sev_class = (
+                    "sev-critical" if finding.severity == "CRITICAL"
+                    else "sev-high" if finding.severity == "HIGH"
+                    else "sev-medium" if finding.severity == "MEDIUM"
+                    else "sev-low"
+                )
+                with st.container(border=True):
+                    top_row = st.columns([3, 1])
+                    top_row[0].markdown(
+                        f"<span class='{sev_class}'>{finding.severity}</span> · "
+                        f"<strong>{finding.title}</strong> · <em>{finding.category}</em>",
+                        unsafe_allow_html=True,
+                    )
+                    top_row[1].markdown(f"<span class='mitre-badge'>{finding.mitre_attack}</span>", unsafe_allow_html=True)
+
+                    st.write(finding.description)
+                    st.markdown(f"**Target:** `{finding.target}` · **Recommended Playbook:** `{finding.recommended_playbook.value.replace('_', ' ').title()}`")
+
+                    with st.expander("Evidence & Telemetry Details"):
+                        st.json(finding.evidence)
+
+                    action_id = st.session_state.queued_threat_ids.get(finding.id)
+                    if action_id:
+                        st.success(f"✅ Queued in SOAR Approval Queue · Action ID: `{action_id}` (Status: Pending Approval)")
+                    else:
+                        if st.button(
+                            f"🚨 Queue '{finding.recommended_playbook.value.replace('_', ' ').title()}' for Approval",
+                            key=f"queue_{finding.id}",
+                            type="secondary",
+                        ):
+                            action = device_collector.queue_threat_to_soar(finding, orchestrator)
+                            st.session_state.queued_threat_ids[finding.id] = action.action_id
+                            st.success(f"Queued in Approval Queue as Action ID: `{action.action_id}`!")
+                            st.rerun()
+
+        st.info("👉 After queueing threats, navigate to the **'Approval queue'** tab to review impact simulations and record human authorization decisions.")
 
 with overview_tab:
     st.subheader("Guided exercise: suspicious sign-in")
@@ -671,6 +879,18 @@ with approvals_tab:
             f"{action.impact_simulation.risk.value.upper()} risk",
             expanded=True,
         ):
+            if action.requested_by in ("device-threat-analyzer", "api-threat-sensor"):
+                st.markdown(
+                    """
+                    <div style="background: rgba(230, 57, 70, 0.15); border-left: 4px solid #e63946; padding: 0.6rem 0.8rem; border-radius: 6px; margin-bottom: 0.8rem;">
+                        <strong style="color: #ff6b6b;">🛡️ REAL DEVICE THREAT ALERT</strong>
+                        <p style="margin: 0.2rem 0 0; font-size: 0.85rem; color: #edf3fc;">
+                            This containment action was generated from real endpoint security findings (Antivirus / Firewall / Network Sockets).
+                        </p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
             show_impact(action)
             st.caption(
                 f"Requested by {action.requested_by} · "
