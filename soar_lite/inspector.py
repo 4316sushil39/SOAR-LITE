@@ -19,7 +19,15 @@ from io import BytesIO
 from typing import Any, Literal
 from urllib.parse import quote_plus, urlsplit
 
-import zxingcpp
+try:
+    import zxingcpp
+except ImportError:
+    class _DummyZXing:
+        @staticmethod
+        def read_barcodes(image: Any) -> list[Any]:
+            return []
+
+    zxingcpp = _DummyZXing()  # type: ignore
 from PIL import ExifTags, Image, UnidentifiedImageError
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
@@ -562,7 +570,10 @@ def inspect_qr_image(data: bytes) -> ContentReport:
                 signals.append(f"Image edited with software: {exif_data['Software']}")
 
             # Try decoding QR code / barcodes
-            decoded = zxingcpp.read_barcodes(image)
+            try:
+                decoded = zxingcpp.read_barcodes(image)
+            except Exception:
+                decoded = []
 
     except (Image.DecompressionBombError, UnidentifiedImageError, OSError) as exc:
         raise ValueError("Could not read the uploaded image. Use PNG, JPEG, or WebP.") from exc
@@ -580,8 +591,10 @@ def inspect_qr_image(data: bytes) -> ContentReport:
             extra_bytes = len(data) - eoi_idx - 2
             signals.append(f"Forensic Alert: {extra_bytes} bytes of hidden overlay data detected after the JPEG End-Of-Image marker.")
 
-    texts = [result.text for result in decoded if result.text]
+    texts = [result.text for result in decoded if getattr(result, "text", None)]
     if not texts:
+        if isinstance(zxingcpp, _DummyZXing):
+            signals.append("Note: QR decoder (zxing-cpp) not available in this runtime; forensic & steganography analysis performed.")
         return ContentReport(
             kind="QR image",
             risk="Medium" if signals else "Unverified",
