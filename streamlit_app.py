@@ -32,6 +32,16 @@ from soar_lite.threat_collector import (
     device_collector,
 )
 from soar_lite.threat_intel import threat_intel
+import socket
+from soar_lite.scoring import device_scorer
+from soar_lite.vuln import vuln_scanner
+from scripts.demo_threat_simulator import (
+    simulate_eicar_file,
+    simulate_failed_logins,
+    simulate_risky_port,
+    simulate_c2_traffic,
+    cleanup_simulation_artifacts,
+)
 
 # Reload configuration from .env dynamically
 settings.reload()
@@ -382,14 +392,49 @@ executed_count = sum(
 )
 audit_count = len(orchestrator.audit.list_events())
 
-metric_columns = st.columns(4)
-metric_columns[0].metric("Total Actions", len(actions))
-metric_columns[1].metric("Awaiting Approval", pending_count)
-metric_columns[2].metric("Executed Actions", executed_count)
-metric_columns[3].metric("Audit Events", audit_count)
+# Live system health and telemetry calculation
+device_hostname = socket.gethostname()
+try:
+    dev_eval = device_scorer.evaluate_device(device_hostname)
+    health_score = dev_eval.get("health_score", 100)
+    risk_level = dev_eval.get("risk_level", "Low")
+except Exception:
+    health_score = 100
+    risk_level = "Low"
+    dev_eval = {"risk_score": 0, "health_score": 100, "risk_level": "Low", "status": "online"}
 
-device_tab, approvals_tab, simulate_tab, checker_tab, audit_tab, db_tab, overview_tab = st.tabs(
+active_threats_list = db_service.list_threats(status="active")
+vulns_list = db_service.list_vulnerabilities(status="open")
+
+metric_columns = st.columns(6)
+metric_columns[0].metric(
+    "Health Score",
+    f"{health_score}%",
+    delta=f"{risk_level} Risk",
+    delta_color="normal" if health_score >= 80 else "inverse",
+)
+metric_columns[1].metric("Active Threats", len(active_threats_list))
+metric_columns[2].metric("Open CVEs / Vulns", len(vulns_list))
+metric_columns[3].metric("Awaiting Approval", pending_count)
+metric_columns[4].metric("Executed Actions", executed_count)
+metric_columns[5].metric("Audit Events", audit_count)
+
+(
+    live_soc_tab,
+    vuln_tab,
+    simulator_tab,
+    device_tab,
+    approvals_tab,
+    simulate_tab,
+    checker_tab,
+    audit_tab,
+    db_tab,
+    overview_tab,
+) = st.tabs(
     [
+        "🛰️ Live SOC Telemetry",
+        "🔍 Vulnerabilities & CVEs",
+        "⚡ Threat Simulator (Demo)",
         "🛡️ Real Device Threats",
         "Approval queue",
         "New simulation",
@@ -399,6 +444,173 @@ device_tab, approvals_tab, simulate_tab, checker_tab, audit_tab, db_tab, overvie
         "Start here",
     ]
 )
+
+with live_soc_tab:
+    st.subheader("🛰️ Live SOC Telemetry & Real-Time Threat Stream")
+    st.markdown(
+        "Continuous live endpoint telemetry streaming from **Background Collectors** "
+        "(Antivirus / Windows Defender, Firewall Profiles & Drops, Process Spawns, Risky Ports, Event ID 4625 Logins, and FIM Watchdog). "
+        "Threats are evaluated in real time against **YAML Detection Rules** and enriched with **VirusTotal** and **AbuseIPDB** intelligence."
+    )
+
+    soc_c1, soc_c2, soc_c3, soc_c4 = st.columns(4)
+    soc_c1.metric("Monitored Hostname", device_hostname)
+    soc_c2.metric("Composite Risk Score", f"{dev_eval.get('risk_score', 0)} / 100")
+    soc_c3.metric(
+        "Device Health",
+        f"{health_score}%",
+        delta="Normal" if health_score >= 80 else "Degraded",
+        delta_color="normal" if health_score >= 80 else "inverse",
+    )
+    soc_c4.metric("Device Posture", str(dev_eval.get("status", "online")).upper())
+
+    st.markdown("---")
+    st.markdown("### 🚨 Active Detected Threats (`soar_threats`)")
+
+    if not active_threats_list:
+        st.success("✅ No active uncontained threats detected on this device. System posture is clean.")
+    else:
+        for threat in active_threats_list:
+            sev_class = f"sev-{threat.severity.value.lower()}"
+            with st.container(border=True):
+                t_cols = st.columns([3, 1, 1, 2])
+                t_cols[0].markdown(f"**{threat.title}**")
+                t_cols[0].caption(f"Category: `{threat.category}` · Target: `{threat.target or 'Localhost'}`")
+                t_cols[1].markdown(f'<span class="{sev_class}">{threat.severity.value.upper()}</span>', unsafe_allow_html=True)
+                t_cols[2].metric("CVSS 3.1", f"{threat.numeric_score:.1f}")
+
+                recommended_pb = PlaybookName.HOST_ISOLATION
+                if "Malicious File" in threat.title or "EICAR" in threat.title:
+                    recommended_pb = PlaybookName.QUARANTINE_FILE
+                elif "C2" in threat.title or "Malicious IP" in threat.title:
+                    recommended_pb = PlaybookName.BLOCK_IP
+                elif "Logon" in threat.title or "Brute Force" in threat.title:
+                    recommended_pb = PlaybookName.DISABLE_ACCOUNT
+                elif "Offensive" in threat.title or "Process" in threat.title:
+                    recommended_pb = PlaybookName.KILL_PROCESS
+
+                if t_cols[3].button(
+                    f"⚡ Contain: {recommended_pb.value.replace('_', ' ').title()}",
+                    key=f"contain_{threat.threat_id}",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    orchestrator.create_action(
+                        ActionRequest(
+                            playbook=recommended_pb,
+                            target=threat.target or device_hostname,
+                            rationale=f"Automated containment triggered from active threat '{threat.title}' (CVSS {threat.numeric_score})",
+                            requested_by="soc-analyst",
+                        )
+                    )
+                    st.toast(f"Containment action for '{threat.title}' queued to Approval Queue!", icon="🛡️")
+                    st.rerun()
+
+    st.markdown("---")
+    st.markdown("### 📡 Live Telemetry Event Stream (`soar_events`)")
+    recent_events = db_service.list_events(limit=25)
+    if not recent_events:
+        st.info("No raw telemetry events recorded yet. Run a threat simulation or scan to generate events.")
+    else:
+        evt_data = []
+        for e in recent_events:
+            ts_str = e.timestamp.strftime("%Y-%m-%d %H:%M:%S") if hasattr(e.timestamp, "strftime") else str(e.timestamp)
+            payload_summary = str(e.raw_payload.get("message", e.raw_payload.get("raw_data", str(e.raw_payload))))[:80]
+            evt_data.append({
+                "Timestamp (UTC)": ts_str,
+                "Source": e.source,
+                "Event Type": e.event_type,
+                "Severity": e.severity.value.upper(),
+                "Device": e.device_id,
+                "Summary": payload_summary,
+            })
+        st.dataframe(evt_data, use_container_width=True)
+
+with vuln_tab:
+    st.subheader("🔍 Vulnerability Management & OS Posture Auditor")
+    st.markdown(
+        "Discovers installed software via Registry/Package Managers, correlates versions against **NVD / OSV CVE API** "
+        "(with offline caching), audits **OS Patch Currency** (`Get-HotFix`), checks **Risky Open Ports** (Telnet 23, SMB 445, RDP 3389), "
+        "and flags **Weak Security Configurations** (Firewall profiles, UAC)."
+    )
+
+    v_c1, v_c2 = st.columns([1, 1])
+    with v_c1:
+        st.markdown("**Live Vulnerability & Posture Scanner**")
+        st.caption("Performs real-time software inventory, OS hotfix audit, risky port audit, and CVE lookup.")
+        if st.button("🔍 Run Full Vulnerability Scan Now", key="btn_run_vuln_scan", type="primary", use_container_width=True):
+            with st.spinner("Auditing software inventory, patch status, and risky listening ports..."):
+                findings = vuln_scanner.run_full_scan(device_id=device_hostname)
+                dev_eval = device_scorer.evaluate_device(device_hostname)
+            st.toast(f"Scan complete: {len(findings)} findings evaluated!", icon="🔍")
+            st.rerun()
+
+    with v_c2:
+        st.markdown("**Vulnerability Metrics**")
+        open_vulns = db_service.list_vulnerabilities(status="open")
+        st.metric("Total Identified Vulnerabilities", len(open_vulns))
+
+    st.markdown("---")
+    st.markdown("### 📋 Discovered CVEs & Misconfigurations")
+    if not open_vulns:
+        st.info("No open vulnerabilities currently on record. Click 'Run Full Vulnerability Scan Now' above.")
+    else:
+        for v in open_vulns:
+            with st.container(border=True):
+                vc1, vc2, vc3 = st.columns([3, 1, 1])
+                vc1.markdown(f"**{v.title}** (`{v.cve_id}`)")
+                vc1.caption(f"{v.description} · Software: `{v.software_name} {v.installed_version}`")
+                vc2.markdown(f'<span class="sev-{v.severity.value.lower()}">{v.severity.value.upper()}</span>', unsafe_allow_html=True)
+                vc3.metric("CVSS Score", f"{v.cvss_score:.1f}")
+
+with simulator_tab:
+    st.subheader("⚡ Live Threat Simulator (Interactive SOC Demo Lab)")
+    st.markdown(
+        "Safely inject controlled, realistic security events into the live SOAR engine to demonstrate "
+        "instant telemetry collection, rule detection, CVSS risk scoring, and 1-click containment."
+    )
+
+    sim_c1, sim_c2 = st.columns(2)
+
+    with sim_c1:
+        st.markdown("#### 1. File Integrity & Malware Test")
+        st.caption("Drops the standard EICAR test string into `monitored_files/`. Triggers FIM + VirusTotal hash intelligence.")
+        if st.button("💣 Drop EICAR Test File", key="sim_eicar_btn", use_container_width=True):
+            simulate_eicar_file()
+            st.toast("EICAR test file emitted and analyzed!", icon="💣")
+            st.success("Critical Threat Generated: 'Malicious File Detected by Intel: eicar_test.txt'")
+            st.rerun()
+
+        st.markdown("#### 2. Brute Force Credential Surge")
+        st.caption("Simulates 6 rapid failed logons (Windows Event ID 4625). Triggers RULE-AUTH-001 (5+ failed logins in 60s).")
+        if st.button("🔨 Simulate Brute Force Logins", key="sim_brute_btn", use_container_width=True):
+            simulate_failed_logins(count=6)
+            st.toast("Brute force surge emitted!", icon="🔨")
+            st.success("Critical Threat Generated: 'Surge in Failed Logons (5+ attempts in 60s)'")
+            st.rerun()
+
+    with sim_c2:
+        st.markdown("#### 3. Risky / Legacy Service Port Exposure")
+        st.caption("Emulates an unencrypted legacy service listening on port 23 (Telnet). Triggers RULE-SYS-002.")
+        if st.button("🚪 Expose Risky Port 23 (Telnet)", key="sim_port_btn", use_container_width=True):
+            simulate_risky_port()
+            st.toast("Risky port telemetry emitted!", icon="🚪")
+            st.warning("High Threat Generated: 'High-Risk Service Exposed to Network: Telnet (Port 23)'")
+            st.rerun()
+
+        st.markdown("#### 4. Malicious C2 Communication")
+        st.caption("Emulates active outbound socket to known malicious C2 IP (185.220.101.5). Triggers AbuseIPDB reputation check.")
+        if st.button("📡 Simulate C2 Outbound Traffic", key="sim_c2_btn", use_container_width=True):
+            simulate_c2_traffic()
+            st.toast("Malicious C2 traffic emitted!", icon="📡")
+            st.error("Critical Threat Generated: 'Active Connection to Malicious C2 IP (185.220.101.5)'")
+            st.rerun()
+
+    st.markdown("---")
+    st.markdown("#### 🧹 Simulation Artifact Cleanup")
+    if st.button("Clean Up Simulation Files & Artifacts", key="sim_clean_btn", use_container_width=True):
+        cleanup_simulation_artifacts()
+        st.success("Removed all simulation artifacts.")
 
 with device_tab:
     st.subheader("🛡️ Real Endpoint Threat & Vulnerability Analyzer")
