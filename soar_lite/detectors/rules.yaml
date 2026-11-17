@@ -1,0 +1,100 @@
+# SOAR Lite Threat Detection Rules
+rules:
+  - id: "RULE-AUTH-001"
+    name: "Brute Force Credential Surge"
+    event_type: "brute_force_surge"
+    severity: "critical"
+    numeric_score: 9.0
+    category: "Identity & Access"
+    mitre: "T1110.001 - Brute Force: Password Guessing"
+    title_template: "Surge in Failed Logons (5+ attempts in 60s)"
+    recommended_playbook: "host_isolation"
+    rationale: "Automated brute-force or credential stuffing surge detected. Isolate host to protect domain identity."
+
+  - id: "RULE-AV-001"
+    name: "Antivirus Engine Inactive"
+    event_type: "av_engine_disabled"
+    severity: "critical"
+    numeric_score: 9.5
+    category: "Antivirus / EDR"
+    mitre: "T1562.001 - Impair Defenses: Disable or Modify Tools"
+    title_template: "Antivirus Engine Impairment Detected"
+    recommended_playbook: "host_isolation"
+    rationale: "Host antivirus daemon or service was disabled or failed to start."
+
+  - id: "RULE-AV-002"
+    name: "Real-Time Protection Disabled"
+    event_type: "av_realtime_protection_disabled"
+    severity: "critical"
+    numeric_score: 9.0
+    category: "Antivirus / EDR"
+    mitre: "T1562.001 - Impair Defenses: Disable or Modify Tools"
+    title_template: "Antivirus Real-Time Protection Turned OFF"
+    recommended_playbook: "host_isolation"
+    rationale: "Real-time on-access scanning was deactivated, leaving endpoint vulnerable to payload execution."
+
+  - id: "RULE-AV-003"
+    name: "Active Malware Intercepted"
+    event_type: "malware_detected"
+    severity: "critical"
+    numeric_score: 9.8
+    category: "Antivirus / EDR"
+    mitre: "T1204 - User Execution: Malicious File"
+    title_template: "Malware Detected on Endpoint: {payload[threat_name]}"
+    recommended_playbook: "host_isolation"
+    rationale: "Host antivirus caught active malware payload on the filesystem."
+
+  - id: "RULE-FW-001"
+    name: "Host Firewall Disabled"
+    event_type: "firewall_disabled"
+    severity: "critical"
+    numeric_score: 8.8
+    category: "Firewall Posture"
+    mitre: "T1562.004 - Impair Defenses: Disable or Modify System Firewall"
+    title_template: "Host Firewall Profile Disabled ({payload[profile]})"
+    recommended_playbook: "host_isolation"
+    rationale: "Host firewall profile was turned off, exposing machine to unfiltered network packets."
+
+  - id: "RULE-SYS-001"
+    name: "Offensive Tool Spawned"
+    event_type: "suspicious_process_spawned"
+    severity: "critical"
+    numeric_score: 9.2
+    category: "Process Execution"
+    mitre: "T1059 - Command and Scripting Interpreter"
+    title_template: "Offensive Security Tool Detected: {payload[process_name]}"
+    recommended_playbook: "kill_process"
+    rationale: "Known post-exploitation or credential dumping binary was executed."
+
+  - id: "RULE-SYS-002"
+    name: "Exposed High-Risk Service"
+    event_type: "high_risk_port_listening"
+    severity: "high"
+    numeric_score: 7.5
+    category: "Network Exposure"
+    mitre: "T1021 - Remote Services"
+    title_template: "High-Risk Service Exposed to Network: {payload[service]} (Port {payload[port]})"
+    recommended_playbook: "host_isolation"
+    rationale: "Dangerous service listening on public interfaces without network boundary protection."
+
+  - id: "RULE-FIM-001"
+    name: "Malicious File Detected via Hash Intelligence"
+    event_type: "malicious_file_hash"
+    severity: "critical"
+    numeric_score: 9.5
+    category: "File Integrity"
+    mitre: "T1204.002 - Malicious File"
+    title_template: "Malicious File Detected by Intel: {payload[file_name]}"
+    recommended_playbook: "quarantine_file"
+    rationale: "File hash matches known threat signatures on VirusTotal or MalwareBazaar."
+
+  - id: "RULE-NET-001"
+    name: "Connection to Malicious External IP"
+    event_type: "malicious_c2_connection"
+    severity: "critical"
+    numeric_score: 9.0
+    category: "Network"
+    mitre: "T1071.001 - Command and Control: Web Protocols"
+    title_template: "Active Connection to Malicious C2 IP ({payload[remote_ip]})"
+    recommended_playbook: "block_ip"
+    rationale: "Outbound network connection detected to host flagged on AbuseIPDB or threat intelligence feeds."

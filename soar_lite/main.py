@@ -1,11 +1,18 @@
 """FastAPI application for SOAR Lite with database, network containment, and live intelligence."""
 
+import asyncio
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
+from .api import api_router, ws_manager
+from .collectors import collector_manager
 from .config import settings
 from .database import db_service
+from .detectors import rule_engine
 from .models import (
     ActionRequest,
     ApprovalDecision,
@@ -24,11 +31,48 @@ app = FastAPI(
     title="SOAR Lite: Safe Automated Containment Orchestrator",
     description=(
         "Production-ready SOAR platform with real-world network containment, "
-        "Supabase persistent storage, human approval gates, and live threat intelligence."
+        "Supabase persistent storage, human approval gates, live threat monitoring, and web dashboard."
     ),
-    version="2.0.0",
+    version="2.1.0",
 )
 app.state.orchestrator = Orchestrator()
+
+# Include Live Monitoring & Webhook API Routes
+app.include_router(api_router)
+
+# Mount Dashboard Static Files
+dashboard_dir = Path(__file__).resolve().parent / "dashboard"
+if dashboard_dir.exists():
+    app.mount("/dashboard", StaticFiles(directory=str(dashboard_dir), html=True), name="dashboard")
+
+
+@app.get("/", include_in_schema=False)
+def root_redirect():
+    """Serve the SOC Live Dashboard at root."""
+    index_file = dashboard_dir / "index.html"
+    if index_file.exists():
+        return FileResponse(str(index_file))
+    return RedirectResponse(url="/docs")
+
+
+@app.on_event("startup")
+async def on_startup():
+    """Initialize event loop and wire real-time WebSocket broadcast channels."""
+    loop = asyncio.get_running_loop()
+    ws_manager.set_event_loop(loop)
+
+    # Wire telemetry events to live WebSocket stream
+    collector_manager.register_callback(
+        lambda evt: ws_manager.broadcast_threadsafe({"type": "new_event", "data": evt.model_dump(mode="json")})
+    )
+
+    # Wire detected threats to live WebSocket stream
+    rule_engine.register_threat_listener(
+        lambda thr: ws_manager.broadcast_threadsafe({"type": "new_threat", "data": thr.model_dump(mode="json")})
+    )
+
+    # Initialize collectors and register local device in DB
+    collector_manager.initialize()
 
 
 @app.get("/health", tags=["system"])

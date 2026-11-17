@@ -1,0 +1,57 @@
+# SOAR-LITE Configuration File
+device:
+  id: "device-local-01"
+  name: "endpoint-workstation"
+
+collectors:
+  antivirus:
+    enabled: true
+    interval_seconds: 15
+  firewall:
+    enabled: true
+    interval_seconds: 15
+  system:
+    enabled: true
+    interval_seconds: 10
+    check_failed_logins: true
+    failed_login_window_seconds: 60
+  fim:
+    enabled: true
+    watch_directories:
+      - "monitored_files"
+
+detectors:
+  virustotal:
+    enabled: true
+    rate_limit_per_minute: 4
+  abuseipdb:
+    enabled: true
+    confidence_threshold: 50
+  rules:
+    enabled: true
+    rules_file: "detectors/rules.yaml"
+
+vuln:
+  check_interval_seconds: 3600
+  cache_ttl_seconds: 86400
+
+response:
+  dry_run_default: true
+  require_confirmation_for_destructive: true
+  quarantine_directory: "quarantine_vault"
+
+alerts:
+  telegram:
+    enabled: false
+    bot_token: ""
+    chat_id: ""
+  email:
+    enabled: false
+    smtp_server: "smtp.gmail.com"
+    smtp_port: 587
+    use_tls: true
+    smtp_username: ""
+    smtp_password: ""
+    to_email: ""
+  webhook:
+    enabled: true

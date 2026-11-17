@@ -138,3 +138,108 @@ BEGIN
         WITH CHECK (true);
     END IF;
 END $$;
+
+-- ==============================================================================
+-- 8. LIVE MONITORING & VULNERABILITY SCHEMA EXTENSION
+-- ==============================================================================
+
+-- Create Devices Table
+CREATE TABLE IF NOT EXISTS public.soar_devices (
+    device_id TEXT PRIMARY KEY,
+    hostname TEXT NOT NULL,
+    ip_address TEXT DEFAULT '127.0.0.1',
+    mac_address TEXT DEFAULT '',
+    os_type TEXT DEFAULT 'windows',
+    os_version TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'online',
+    risk_score INTEGER NOT NULL DEFAULT 0,
+    last_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+-- Create Events Table
+CREATE TABLE IF NOT EXISTS public.soar_events (
+    event_id TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'low',
+    raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Create Threats Table
+CREATE TABLE IF NOT EXISTS public.soar_threats (
+    threat_id TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    numeric_score DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    status TEXT NOT NULL DEFAULT 'active',
+    mitre_technique TEXT DEFAULT '',
+    target TEXT NOT NULL,
+    evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    resolved_at TIMESTAMPTZ
+);
+
+-- Create Vulnerabilities Table
+CREATE TABLE IF NOT EXISTS public.soar_vulnerabilities (
+    vuln_id TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL,
+    cve_id TEXT DEFAULT '',
+    title TEXT NOT NULL,
+    software_name TEXT DEFAULT '',
+    installed_version TEXT DEFAULT '',
+    fixed_version TEXT DEFAULT '',
+    cvss_score DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    severity TEXT NOT NULL DEFAULT 'low',
+    description TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open',
+    detected_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Create Playbook Runs Table
+CREATE TABLE IF NOT EXISTS public.soar_playbook_runs (
+    run_id TEXT PRIMARY KEY,
+    playbook_name TEXT NOT NULL,
+    target TEXT NOT NULL,
+    parameters JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status TEXT NOT NULL DEFAULT 'pending_approval',
+    dry_run BOOLEAN NOT NULL DEFAULT true,
+    executed_by TEXT NOT NULL DEFAULT 'system',
+    execution_result JSONB NOT NULL DEFAULT '{}'::jsonb,
+    rollback_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at TIMESTAMPTZ
+);
+
+-- Performance Indexes for New Tables
+CREATE INDEX IF NOT EXISTS idx_soar_devices_status ON public.soar_devices(status);
+CREATE INDEX IF NOT EXISTS idx_soar_devices_last_seen ON public.soar_devices(last_seen DESC);
+CREATE INDEX IF NOT EXISTS idx_soar_events_device_id ON public.soar_events(device_id);
+CREATE INDEX IF NOT EXISTS idx_soar_events_timestamp ON public.soar_events(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_soar_threats_device_id ON public.soar_threats(device_id);
+CREATE INDEX IF NOT EXISTS idx_soar_threats_status ON public.soar_threats(status);
+CREATE INDEX IF NOT EXISTS idx_soar_threats_severity ON public.soar_threats(severity);
+CREATE INDEX IF NOT EXISTS idx_soar_vulns_device_id ON public.soar_vulnerabilities(device_id);
+CREATE INDEX IF NOT EXISTS idx_soar_vulns_cve ON public.soar_vulnerabilities(cve_id);
+CREATE INDEX IF NOT EXISTS idx_soar_playbook_runs_status ON public.soar_playbook_runs(status);
+
+-- Enable RLS and Policies for New Tables
+DO $$
+DECLARE
+    tbl text;
+    tables text[] := ARRAY['soar_devices', 'soar_events', 'soar_threats', 'soar_vulnerabilities', 'soar_playbook_runs'];
+BEGIN
+    FOREACH tbl IN ARRAY tables LOOP
+        EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', tbl);
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = tbl AND policyname = format('Allow all access to %s', tbl)
+        ) THEN
+            EXECUTE format('CREATE POLICY "Allow all access to %s" ON public.%I FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);', tbl, tbl);
+        END IF;
+    END LOOP;
+END $$;

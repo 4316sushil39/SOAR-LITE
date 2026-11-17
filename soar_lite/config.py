@@ -49,7 +49,36 @@ class Settings:
 
     # Threat Intelligence API keys
     VIRUSTOTAL_API_KEY: str = os.getenv("VIRUSTOTAL_API_KEY", "").strip()
+    MALWAREBAZAAR_API_KEY: str = os.getenv("MALWAREBAZAAR_API_KEY", "").strip()
     ABUSEIPDB_API_KEY: str = os.getenv("ABUSEIPDB_API_KEY", "").strip()
+    OTX_API_KEY: str = os.getenv("OTX_API_KEY", "").strip()
+
+    # Telegram Alert Configuration
+    TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+
+    # Email Alert Configuration
+    SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com").strip()
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USER: str = os.getenv("SMTP_USER", "").strip()
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "").strip()
+    ALERT_EMAIL_TO: str = os.getenv("ALERT_EMAIL_TO", "").strip()
+
+    # Path to YAML config
+    CONFIG_YAML_PATH: Path = Path(__file__).resolve().parent.parent / "config.yaml"
+    YAML_CONFIG: dict = {}
+
+    @classmethod
+    def load_yaml(cls) -> dict:
+        try:
+            import yaml
+            if cls.CONFIG_YAML_PATH.exists():
+                with open(cls.CONFIG_YAML_PATH, "r", encoding="utf-8") as f:
+                    cls.YAML_CONFIG = yaml.safe_load(f) or {}
+                    return cls.YAML_CONFIG
+        except Exception:
+            pass
+        return {}
 
     @classmethod
     def is_supabase_configured(cls) -> bool:
@@ -83,7 +112,18 @@ class Settings:
         cls.SQLITE_DB_PATH = Path(os.getenv("SQLITE_DB_PATH", str(Path(__file__).resolve().parent.parent / "soar_lite.db")))
         cls.ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "").strip()
         cls.VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY", "").strip()
+        cls.MALWAREBAZAAR_API_KEY = os.getenv("MALWAREBAZAAR_API_KEY", "").strip()
         cls.ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "").strip()
+        cls.OTX_API_KEY = os.getenv("OTX_API_KEY", "").strip()
+        cls.TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+        cls.TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+        cls.SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com").strip()
+        cls.SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+        cls.SMTP_USER = os.getenv("SMTP_USER", "").strip()
+        cls.SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
+        cls.ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "").strip()
+        cls.load_yaml()
 
 
 settings = Settings()
+settings.load_yaml()

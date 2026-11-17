@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  soar-lite:
+    build: .
+    container_name: soar_lite_app
+    ports:
+      - "8000:8000"
+      - "8501:8501"
+    environment:
+      - EXECUTION_MODE=simulation
+      - SQLITE_DB_PATH=/app/soar_lite.db
+    volumes:
+      - ./monitored_files:/app/monitored_files
+      - ./quarantine_vault:/app/quarantine_vault
+      - ./soar_lite.db:/app/soar_lite.db
+    restart: unless-stopped

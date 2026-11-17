@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SOAR Lite | Live Security Operations Center</title>
+  <link rel="stylesheet" href="/dashboard/styles.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span style="font-size: 1.5rem;">🛡️</span>
+      <h1>SOAR-LITE</h1>
+      <span class="tag">Live SOC Control Room</span>
+    </div>
+    <div class="header-actions">
+      <div id="connectionStatus" class="connection-pill">
+        <span class="pulse-dot"></span>
+        <span id="connectionText">Connecting...</span>
+      </div>
+      <button class="btn btn-primary" onclick="triggerVulnScan()">🔍 Scan Vulnerabilities</button>
+      <button class="btn" onclick="fetchFullState()">🔄 Refresh Data</button>
+    </div>
+  </header>
+
+  <main class="dashboard-container">
+    <!-- Top Metrics Row -->
+    <section class="metrics-grid">
+      <div class="metric-card">
+        <span class="metric-title">Device Risk Score</span>
+        <div id="mRiskScore" class="metric-value" style="color: #22c55e;">0 / 100</div>
+        <span id="mRiskLevel" class="metric-subtitle">Risk Level: Low (Healthy)</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-title">Active Threats</span>
+        <div id="mActiveThreats" class="metric-value" style="color: #f87171;">0</div>
+        <span id="mThreatsCrit" class="metric-subtitle">0 Critical | 0 High</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-title">Discovered Vulnerabilities</span>
+        <div id="mVulnsCount" class="metric-value" style="color: #facc15;">0</div>
+        <span id="mVulnsCrit" class="metric-subtitle">0 Critical CVEs</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-title">Telemetry Events</span>
+        <div id="mEventsCount" class="metric-value">0</div>
+        <span class="metric-subtitle">Streamed in Real-Time</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-title">Monitored Endpoints</span>
+        <div id="mDevicesCount" class="metric-value">1</div>
+        <span id="mLocalHostname" class="metric-subtitle">Device: localhost</span>
+      </div>
+    </section>
+
+    <!-- Navigation Tabs -->
+    <nav class="tabs">
+      <button class="tab-btn active" onclick="switchTab('threats')">🚨 Active Threats & Containment</button>
+      <button class="tab-btn" onclick="switchTab('events')">📡 Live Telemetry Feed</button>
+      <button class="tab-btn" onclick="switchTab('vulns')">🔎 Vulnerability Inventory</button>
+      <button class="tab-btn" onclick="switchTab('playbooks')">⚡ Response Queue & History</button>
+      <button class="tab-btn" onclick="switchTab('devices')">💻 Monitored Devices</button>
+    </nav>
+
+    <!-- TAB 1: ACTIVE THREATS -->
+    <section id="tab-threats" class="tab-pane active">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Active Endpoint Threats</h2>
+          <span style="font-size: 0.8rem; color: var(--text-muted);">Real-time detections matched against YAML rules & threat intelligence</span>
+        </div>
+        <div class="feed-box">
+          <table id="threatsTable">
+            <thead>
+              <tr>
+                <th>Severity</th>
+                <th>Threat Title</th>
+                <th>Category</th>
+                <th>Target</th>
+                <th>Score</th>
+                <th>MITRE ATT&CK</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="threatsBody">
+              <tr><td colspan="7" style="text-align:center; color: var(--text-muted);">No active threats detected. System is clean.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: LIVE TELEMETRY FEED -->
+    <section id="tab-events" class="tab-pane">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Live Event Stream</h2>
+          <div>
+            <button class="btn btn-sm" onclick="clearEventFeed()">Clear Feed</button>
+          </div>
+        </div>
+        <div class="feed-box">
+          <table id="eventsTable">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Source</th>
+                <th>Event Type</th>
+                <th>Severity</th>
+                <th>Payload Summary</th>
+              </tr>
+            </thead>
+            <tbody id="eventsBody">
+              <tr><td colspan="5" style="text-align:center; color: var(--text-muted);">Waiting for telemetry collector stream...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: VULNERABILITY INVENTORY -->
+    <section id="tab-vulns" class="tab-pane">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Discovered Vulnerabilities & CVE Audit</h2>
+          <button class="btn btn-sm btn-primary" onclick="triggerVulnScan()">Run Full Scan Now</button>
+        </div>
+        <div class="feed-box">
+          <table id="vulnsTable">
+            <thead>
+              <tr>
+                <th>Severity</th>
+                <th>CVE ID</th>
+                <th>Vulnerability Title</th>
+                <th>Software</th>
+                <th>Installed Version</th>
+                <th>CVSS Score</th>
+              </tr>
+            </thead>
+            <tbody id="vulnsBody">
+              <tr><td colspan="6" style="text-align:center; color: var(--text-muted);">No vulnerabilities recorded. Click "Run Full Scan" to audit.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: RESPONSE & PLAYBOOK RUNS -->
+    <section id="tab-playbooks" class="tab-pane">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Automated Containment Playbooks & Audit</h2>
+          <span style="font-size: 0.8rem; color: var(--text-muted);">Automated response history with safety gates and rollback controls</span>
+        </div>
+        <div class="feed-box">
+          <table id="playbooksTable">
+            <thead>
+              <tr>
+                <th>Run ID</th>
+                <th>Playbook</th>
+                <th>Target</th>
+                <th>Mode</th>
+                <th>Status</th>
+                <th>Executed By</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="playbooksBody">
+              <tr><td colspan="7" style="text-align:center; color: var(--text-muted);">No containment playbooks executed yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 5: MONITORED DEVICES -->
+    <section id="tab-devices" class="tab-pane">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Monitored Device Fleet</h2>
+        </div>
+        <div class="feed-box">
+          <table id="devicesTable">
+            <thead>
+              <tr>
+                <th>Hostname</th>
+                <th>IP Address</th>
+                <th>OS & Version</th>
+                <th>Risk Score</th>
+                <th>Status</th>
+                <th>Last Seen</th>
+              </tr>
+            </thead>
+            <tbody id="devicesBody">
+              <tr><td colspan="6" style="text-align:center; color: var(--text-muted);">Loading devices...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/dashboard/app.js"></script>
+</body>
+</html>

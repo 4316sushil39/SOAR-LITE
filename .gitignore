@@ -7,3 +7,5 @@ venv/
 *.db
 *.sqlite
 *.sqlite3
+monitored_files/
+quarantine_vault/

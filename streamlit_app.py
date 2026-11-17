@@ -409,6 +409,15 @@ with device_tab:
         "with a single click for human authorization and real network containment."
     )
 
+    is_cloud_env = os.getenv("STREAMLIT_SHARING_MODE") is not None or not os.path.exists(r"C:\Windows")
+    if is_cloud_env:
+        st.info(
+            "☁️ **Cloud Host Notice:** This instance is running on a remote cloud server/container. "
+            "Live scans query the **server host** running Python, because web browsers cannot grant remote web servers "
+            "access to execute terminal commands on your local device. To inspect your physical Windows PC's firewall and ports, "
+            "run `streamlit run streamlit_app.py` locally on your machine."
+        )
+
     scan_col1, scan_col2 = st.columns([1, 1])
     with scan_col1:
         st.markdown("**Live Device Inspection**")
@@ -461,7 +470,10 @@ with device_tab:
         h_col3.metric("Antivirus / EDR", av_status_txt)
 
         fw_info = scan_result.firewall_status
-        fw_status_txt = "All ON" if fw_info.get("all_enabled") else "Disabled Profiles"
+        if fw_info.get("domain_profile") == "UNKNOWN":
+            fw_status_txt = "Unverified (Remote Host)"
+        else:
+            fw_status_txt = "All ON" if fw_info.get("all_enabled") else "Disabled Profiles"
         h_col4.metric("Host Firewall", fw_status_txt)
 
         h_col5.metric("Threat Findings", len(scan_result.findings))
@@ -494,9 +506,15 @@ with device_tab:
             with tel_tab2:
                 st.markdown(f"**Provider:** `{fw_info.get('provider', 'Host Firewall')}`")
                 fw_c1, fw_c2, fw_c3 = st.columns(3)
-                fw_c1.write(f"**Domain Profile:** `{'🟢 ON' if fw_info.get('domain_profile') == 'ON' else '🔴 OFF'}`")
-                fw_c2.write(f"**Private Profile:** `{'🟢 ON' if fw_info.get('private_profile') == 'ON' else '🔴 OFF'}`")
-                fw_c3.write(f"**Public Profile:** `{'🟢 ON' if fw_info.get('public_profile') == 'ON' else '🔴 OFF'}`")
+                fw_c1.write(f"**Domain Profile:** `{'🟢 ON' if fw_info.get('domain_profile') == 'ON' else ('⚪ UNKNOWN' if fw_info.get('domain_profile') == 'UNKNOWN' else '🔴 OFF')}`")
+                fw_c2.write(f"**Private Profile:** `{'🟢 ON' if fw_info.get('private_profile') == 'ON' else ('⚪ UNKNOWN' if fw_info.get('private_profile') == 'UNKNOWN' else '🔴 OFF')}`")
+                fw_c3.write(f"**Public Profile:** `{'🟢 ON' if fw_info.get('public_profile') == 'ON' else ('⚪ UNKNOWN' if fw_info.get('public_profile') == 'UNKNOWN' else '🔴 OFF')}`")
+                if fw_info.get("domain_profile") == "UNKNOWN":
+                    st.warning(
+                        "⚠️ Unable to query local firewall status from this host environment. "
+                        "When running on Streamlit Cloud or Docker, telemetry reflects the remote container host, "
+                        "not your personal client device. Run SOAR Lite locally on your laptop to inspect your physical firewall."
+                    )
                 if "raw_output" in fw_info:
                     st.text(fw_info["raw_output"])
 

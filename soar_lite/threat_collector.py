@@ -218,15 +218,16 @@ class DeviceThreatCollector:
     def collect_firewall_telemetry(self) -> dict[str, Any]:
         """Collect host firewall posture across all network profiles."""
         default_fw = {
-            "provider": "Host Firewall",
-            "domain_profile": "ON",
-            "private_profile": "ON",
-            "public_profile": "ON",
-            "all_enabled": True,
-            "inbound_policy": "BlockInboundDefault",
+            "provider": "Host Firewall (Unverified / Remote Host)",
+            "domain_profile": "UNKNOWN",
+            "private_profile": "UNKNOWN",
+            "public_profile": "UNKNOWN",
+            "all_enabled": False,
+            "inbound_policy": "Unknown",
         }
 
         if self.is_windows:
+            # 1. Primary: netsh advfirewall (fastest)
             try:
                 res = subprocess.run(
                     ["netsh", "advfirewall", "show", "allprofiles", "state"],
@@ -241,20 +242,47 @@ class DeviceThreatCollector:
                     private_match = re.search(r"Private Profile Settings:.*?State\s+(ON|OFF)", out, re.DOTALL | re.IGNORECASE)
                     public_match = re.search(r"Public Profile Settings:.*?State\s+(ON|OFF)", out, re.DOTALL | re.IGNORECASE)
 
-                    d_on = (domain_match.group(1).upper() == "ON") if domain_match else True
-                    pr_on = (private_match.group(1).upper() == "ON") if private_match else True
-                    pu_on = (public_match.group(1).upper() == "ON") if public_match else True
+                    if domain_match and private_match and public_match:
+                        d_on = domain_match.group(1).upper() == "ON"
+                        pr_on = private_match.group(1).upper() == "ON"
+                        pu_on = public_match.group(1).upper() == "ON"
 
-                    return {
-                        "provider": "Windows Defender Firewall",
-                        "domain_profile": "ON" if d_on else "OFF",
-                        "private_profile": "ON" if pr_on else "OFF",
-                        "public_profile": "ON" if pu_on else "OFF",
-                        "all_enabled": d_on and pr_on and pu_on,
-                        "raw_output": out.strip()[:300],
-                    }
+                        return {
+                            "provider": "Windows Defender Firewall",
+                            "domain_profile": "ON" if d_on else "OFF",
+                            "private_profile": "ON" if pr_on else "OFF",
+                            "public_profile": "ON" if pu_on else "OFF",
+                            "all_enabled": d_on and pr_on and pu_on,
+                            "raw_output": out.strip()[:300],
+                        }
             except Exception as exc:
-                logger.debug("Failed querying Windows firewall: %s", exc)
+                logger.debug("Failed querying Windows firewall via netsh: %s", exc)
+
+            # 2. Fallback: PowerShell Get-NetFirewallProfile (locale-agnostic)
+            try:
+                ps_res = subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", "Get-NetFirewallProfile | Select-Object Name, Enabled | ConvertTo-Json"],
+                    capture_output=True,
+                    text=True,
+                    timeout=4,
+                )
+                if ps_res.returncode == 0 and ps_res.stdout.strip():
+                    profiles = json.loads(ps_res.stdout)
+                    if isinstance(profiles, list):
+                        p_map = {str(p.get("Name", "")).lower(): bool(p.get("Enabled")) for p in profiles}
+                        d_on = p_map.get("domain", True)
+                        pr_on = p_map.get("private", True)
+                        pu_on = p_map.get("public", True)
+                        return {
+                            "provider": "Windows Defender Firewall",
+                            "domain_profile": "ON" if d_on else "OFF",
+                            "private_profile": "ON" if pr_on else "OFF",
+                            "public_profile": "ON" if pu_on else "OFF",
+                            "all_enabled": d_on and pr_on and pu_on,
+                            "raw_output": ps_res.stdout.strip()[:300],
+                        }
+            except Exception as exc:
+                logger.debug("Failed querying Windows firewall via PowerShell: %s", exc)
 
         elif self.is_linux:
             try:
@@ -323,16 +351,18 @@ class DeviceThreatCollector:
                             is_public_bind = local_addr.startswith("0.0.0.0:") or local_addr.startswith("[::]:") or local_addr.startswith(":::")
                             if local_port in HIGH_RISK_PORTS and is_public_bind:
                                 risk_info = HIGH_RISK_PORTS[local_port]
-                                high_risk_ports_found.append({
-                                    "port": local_port,
-                                    "service": risk_info["name"],
-                                    "severity": risk_info["severity"],
-                                    "desc": risk_info["desc"],
-                                    "mitre": risk_info["mitre"],
-                                    "pid": pid,
-                                    "process_name": process_name,
-                                    "bind_address": local_addr,
-                                })
+                                # Deduplicate by port so multiple bindings (IPv4 + IPv6) create only one finding
+                                if not any(p["port"] == local_port for p in high_risk_ports_found):
+                                    high_risk_ports_found.append({
+                                        "port": local_port,
+                                        "service": risk_info["name"],
+                                        "severity": risk_info["severity"],
+                                        "desc": risk_info["desc"],
+                                        "mitre": risk_info["mitre"],
+                                        "pid": pid,
+                                        "process_name": process_name,
+                                        "bind_address": local_addr,
+                                    })
 
                         elif state == "ESTABLISHED":
                             # Check remote address
@@ -459,26 +489,42 @@ class DeviceThreatCollector:
 
         # Check Firewall Profiles
         if not firewall.get("all_enabled", True):
-            score -= 25
             disabled_profiles = []
             for prof in ("domain_profile", "private_profile", "public_profile"):
                 if firewall.get(prof) == "OFF":
                     disabled_profiles.append(prof.replace("_profile", "").capitalize())
 
-            findings.append(
-                DeviceThreatFinding(
-                    id=f"THR-FW-{uuid4().hex[:6].upper()}",
-                    title=f"Host Firewall Profile Disabled ({', '.join(disabled_profiles)})",
-                    category="Firewall Posture",
-                    severity="HIGH",
-                    target="localhost",
-                    description=f"The operating system firewall is turned OFF for {', '.join(disabled_profiles)} network connections. Inbound packets are unfiltered.",
-                    evidence=firewall,
-                    mitre_attack="T1562.004 - Impair Defenses: Disable or Modify System Firewall",
-                    recommended_playbook=PlaybookName.HOST_ISOLATION,
-                    rationale="Enforce network isolation while firewall profiles are restored to prevent intrusion.",
+            if disabled_profiles:
+                score -= 25
+                findings.append(
+                    DeviceThreatFinding(
+                        id=f"THR-FW-{uuid4().hex[:6].upper()}",
+                        title=f"Host Firewall Profile Disabled ({', '.join(disabled_profiles)})",
+                        category="Firewall Posture",
+                        severity="HIGH",
+                        target="localhost",
+                        description=f"The operating system firewall is turned OFF for {', '.join(disabled_profiles)} network connections. Inbound packets are unfiltered.",
+                        evidence=firewall,
+                        mitre_attack="T1562.004 - Impair Defenses: Disable or Modify System Firewall",
+                        recommended_playbook=PlaybookName.HOST_ISOLATION,
+                        rationale="Enforce network isolation while firewall profiles are restored to prevent intrusion.",
+                    )
                 )
-            )
+            elif "UNKNOWN" in (firewall.get("domain_profile"), firewall.get("private_profile"), firewall.get("public_profile")):
+                findings.append(
+                    DeviceThreatFinding(
+                        id=f"THR-FW-{uuid4().hex[:6].upper()}",
+                        title="Host Firewall Unverified (Cloud / Remote Container Host)",
+                        category="Firewall Posture",
+                        severity="MEDIUM",
+                        target="localhost",
+                        description="Unable to query host firewall posture. When hosted on Streamlit Cloud or Docker, telemetry reflects the remote container, not your local client machine.",
+                        evidence=firewall,
+                        mitre_attack="T1562.004 - Impair Defenses: Disable or Modify System Firewall",
+                        recommended_playbook=PlaybookName.HOST_ISOLATION,
+                        rationale="Run SOAR Lite locally on your physical endpoint to inspect your personal OS firewall.",
+                    )
+                )
 
         # Check High-Risk Listening Ports
         for high_risk in network.get("high_risk_ports_found", []):
