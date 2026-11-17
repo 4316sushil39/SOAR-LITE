@@ -2,10 +2,13 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg)](https://fastapi.tiangolo.com)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://soar-lite-mgbvulxusa6zvepzsjslll.streamlit.app/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Tests Passing](https://img.shields.io/badge/tests-75%20passed-brightgreen.svg)]()
 
 **SOAR-LITE** is a lightweight, production-ready Security Orchestration, Automation, and Response platform. It provides continuous real-time endpoint telemetry, threat detection with external threat intelligence feeds, CVSS v3.1 risk scoring, vulnerability management, multi-channel incident alerting, and reversible automated containment playbooks guarded by mandatory human approval gates.
+
+🚀 **Live Cloud Deployment**: [https://soar-lite-mgbvulxusa6zvepzsjslll.streamlit.app/](https://soar-lite-mgbvulxusa6zvepzsjslll.streamlit.app/)
 
 ---
 
